@@ -1,7 +1,9 @@
-executable(
-	'main',
-	'main.cpp',
-	include_directories : [lib_incdirs],
-	link_with : [lib],
-	dependencies : [mpi]
+executable('milestone04',
+  'main.cpp',
+  include_directories: include_directories('../src'),
+  dependencies: [kokkoscore, mpi, lib_dep]
 )
+
+
+subdir('04')  
+
