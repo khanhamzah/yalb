@@ -12,7 +12,8 @@ int main(int argc, char** argv) {
 
         LBMSolver solver(rank, size);  // Pass MPI info
         solver.printInfo();
-        solver.runParallelSimulation();  // new method you'll write
+        solver.runShearWaveDecay(1.0, 200, 20);
+
     }
 
     Kokkos::finalize();

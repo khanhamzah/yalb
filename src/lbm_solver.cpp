@@ -6,11 +6,11 @@
 #include <iomanip>
 #include <cmath>
 #include <sstream>
+#include <chrono>
 
 LBMSolver::LBMSolver(int rank, int size)
     : rank_(rank), size_(size)
 {
-    // Corrected domain splitting for non-divisible widths
     int base = GRID_WIDTH / size_;
     int extra = GRID_WIDTH % size_;
     local_x_start = rank * base + std::min(rank, extra);
@@ -31,9 +31,7 @@ LBMSolver::LBMSolver(int rank, int size)
 }
 
 void LBMSolver::initializeDistribution() {
-    const double u0x = 0.05;
-    const double u0y = 0.0;
-    const double rho0 = 1.0;
+    const double u0x = 0.05, u0y = 0.0, rho0 = 1.0;
     const double w[9] = {
         4.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0,
         1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0
@@ -52,6 +50,31 @@ void LBMSolver::initializeDistribution() {
     Kokkos::deep_copy(v_y, u0y);
 }
 
+void LBMSolver::initializeShearWave(double epsilon) {
+    const double rho0 = 1.0;
+    const double w[9] = {
+        4.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0, 1.0/9.0,
+        1.0/36.0, 1.0/36.0, 1.0/36.0, 1.0/36.0
+    };
+
+    Kokkos::parallel_for("init_shear", Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
+        {local_x_start, 0, 0}, {local_x_end, GRID_HEIGHT, NUM_VELOCITIES}),
+        KOKKOS_LAMBDA(int x, int y, int i) {
+            double uy = epsilon * sin(2.0 * M_PI * x / GRID_WIDTH);
+            double u2 = uy * uy;
+            double cu = 3.0 * (c(1, i) * uy);
+            f(x, y, i) = w[i] * rho0 * (1 + cu + 0.5 * cu * cu - 1.5 * u2);
+        });
+
+    Kokkos::deep_copy(rho, rho0);
+
+    Kokkos::parallel_for("init_vel", Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
+        {local_x_start, 0}, {local_x_end, GRID_HEIGHT}),
+        KOKKOS_LAMBDA(int x, int y) {
+            v_x(x, y) = 0.0;
+            v_y(x, y) = epsilon * sin(2.0 * M_PI * x / GRID_WIDTH);
+        });
+}
 
 void LBMSolver::streaming() {
     DistributionView f_new("f_new", GRID_WIDTH, GRID_HEIGHT, NUM_VELOCITIES);
@@ -136,6 +159,8 @@ void LBMSolver::outputFields(const std::string& filename_prefix) {
 
 void LBMSolver::runDistributed(int steps, double omega, int output_interval) {
     initializeDistribution();
+    auto start = std::chrono::high_resolution_clock::now();
+
     for (int t = 0; t < steps; ++t) {
         streaming();
         computeDensity();
@@ -145,6 +170,41 @@ void LBMSolver::runDistributed(int steps, double omega, int output_interval) {
             outputFields("mpi_output_t" + std::to_string(t));
         }
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    long total_sites = static_cast<long>(GRID_WIDTH) * GRID_HEIGHT * steps;
+    double lups = total_sites / (elapsed.count() * 1e9);
+    if (rank_ == 0)
+        std::cout << "[Rank 0] Lattice updates/sec (Billion): " << lups << std::endl;
+}
+
+void LBMSolver::runShearWaveDecay(double omega, int steps, int output_interval) {
+    double epsilon = 0.01;
+    initializeShearWave(epsilon);
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    for (int t = 0; t < steps; ++t) {
+        streaming();
+        computeDensity();
+        computeVelocityField();
+        collision(omega);
+        if (t % output_interval == 0) {
+            outputFields("shearwave_t" + std::to_string(t));
+        }
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    long total_sites = static_cast<long>(GRID_WIDTH) * GRID_HEIGHT * steps;
+    double lups = total_sites / (elapsed.count() * 1e9);
+    if (rank_ == 0)
+        std::cout << "[Rank 0] Lattice updates/sec (Billion): " << lups << std::endl;
+}
+
+void LBMSolver::exchangeBoundaries() {
+    // TODO: Implement MPI halo exchange here
 }
 
 void LBMSolver::printInfo() {
@@ -153,9 +213,8 @@ void LBMSolver::printInfo() {
 }
 
 void LBMSolver::runParallelSimulation() {
-    const int steps = 100;
+    const int steps = 200;
     const double omega = 1.0;
     const int output_interval = 20;
-
     runDistributed(steps, omega, output_interval);
 }

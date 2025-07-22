@@ -1,7 +1,8 @@
-executable('milestone04',
-  'main.cpp',
-  include_directories: include_directories('../src'),
-  dependencies: [kokkoscore, mpi, lib_dep]
+
+executable('main', 'main.cpp',
+  include_directories: include_directories('../../src'),
+  dependencies: [kokkoscore, mpi, lib_dep],
+  install: false
 )
 
 

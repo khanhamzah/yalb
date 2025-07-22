@@ -2,71 +2,98 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import os
+import subprocess
 
-# --- Configuration ---
-timestep = 80
-prefix = f"mpi_output_t{timestep}"
-output_file = f"field_t{timestep}.png"
+# --- Config ---
+timesteps = range(0, 201, 20)  # frames for t = 0, 20, ..., 200
+frame_dir = "frames"
+video_output = "lid_driven_cavity.mp4"
 
-# --- Load all rank data files ---
-files = sorted(glob.glob(f"{prefix}_rank*.dat"))
-if not files:
-    raise FileNotFoundError(f"❌ No files found with prefix '{prefix}_rank*.dat'")
+os.makedirs(frame_dir, exist_ok=True)
 
-print(f"📂 Visualizing timestep: {prefix} from {len(files)} MPI ranks")
+for timestep in timesteps:
+    prefix = f"mpi_output_t{timestep}"
+    output_file = os.path.join(frame_dir, f"field_t{timestep:03d}.png")
+    files = sorted(glob.glob(f"{prefix}_rank*.dat"))
 
-data_list = []
-for f in files:
-    try:
-        data = np.loadtxt(f)
-        if data.size > 0:
-            data_list.append(data)
-        else:
-            print(f"⚠️ Warning: File {f} is empty")
-    except Exception as e:
-        print(f"❌ Could not load {f}: {e}")
+    if not files:
+        print(f"❌ No files found for timestep {timestep}")
+        continue
 
-# --- Combine all rank data ---
-all_data = np.vstack(data_list)
+    print(f"📂 Loading: {prefix} from {len(files)} MPI ranks")
+    data_list = []
+    for f in files:
+        try:
+            data = np.loadtxt(f)
+            if data.size > 0:
+                data_list.append(data)
+            else:
+                print(f"⚠️ Warning: File {f} is empty")
+        except Exception as e:
+            print(f"❌ Could not load {f}: {e}")
 
-# --- Extract and sort unique x and y values for reshaping ---
-x = all_data[:, 0]
-y = all_data[:, 1]
-rho = all_data[:, 2]
-vx = all_data[:, 3]
-vy = all_data[:, 4]
+    if not data_list:
+        print(f"⚠️ No valid data loaded for timestep {timestep}")
+        continue
 
-x_unique = np.unique(x)
-y_unique = np.unique(y)
+    all_data = np.vstack(data_list)
 
-nx, ny = len(x_unique), len(y_unique)
-if len(x) != nx * ny:
-    raise ValueError(f"❌ Cannot reshape: {len(x)} values but grid is {nx}x{ny} = {nx*ny}")
+    x = all_data[:, 0]
+    y = all_data[:, 1]
+    rho = all_data[:, 2]
+    vx = all_data[:, 3]
+    vy = all_data[:, 4]
 
-# --- Create grid for plotting ---
-x_grid = x.reshape(ny, nx)
-y_grid = y.reshape(ny, nx)
-rho_grid = rho.reshape(ny, nx)
-vx_grid = vx.reshape(ny, nx)
-vy_grid = vy.reshape(ny, nx)
+    x_unique = np.unique(x)
+    y_unique = np.unique(y)
+    nx, ny = len(x_unique), len(y_unique)
 
-# --- Plot ---
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    if len(x) != nx * ny:
+        print(f"❌ Grid shape mismatch at timestep {timestep}")
+        continue
 
-# Density
-im1 = ax1.contourf(x_grid, y_grid, rho_grid, cmap="viridis")
-ax1.set_title("Density Field")
-ax1.set_xlabel("x")
-ax1.set_ylabel("y")
-plt.colorbar(im1, ax=ax1)
+    x_grid = x.reshape(ny, nx)
+    y_grid = y.reshape(ny, nx)
+    rho_grid = rho.reshape(ny, nx)
+    vx_grid = vx.reshape(ny, nx)
+    vy_grid = vy.reshape(ny, nx)
 
-# Velocity
-ax2.quiver(x_grid, y_grid, vx_grid, vy_grid)
-ax2.set_title("Velocity Field")
-ax2.set_xlabel("x")
-ax2.set_ylabel("y")
-ax2.set_aspect('equal')
+    # --- Plot ---
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-plt.tight_layout()
-plt.savefig(output_file)
-print(f"✅ Saved structured field visualization: {output_file}")
+    im1 = ax1.contourf(x_grid, y_grid, rho_grid, cmap="viridis")
+    ax1.set_title(f"Density Field (t = {timestep})")
+    ax1.set_xlabel("x")
+    ax1.set_ylabel("y")
+    plt.colorbar(im1, ax=ax1)
+
+    ax2.quiver(x_grid, y_grid, vx_grid, vy_grid)
+    ax2.set_title(f"Velocity Field (t = {timestep})")
+    ax2.set_xlabel("x")
+    ax2.set_ylabel("y")
+    ax2.set_aspect('equal')
+
+    plt.tight_layout()
+    plt.savefig(output_file)
+    plt.close()
+    print(f"✅ Saved: {output_file}")
+
+# --- Create video using ffmpeg ---
+print("🎥 Compiling video...")
+
+ffmpeg_cmd = [
+    "ffmpeg",
+    "-y",
+    "-framerate", "5",
+    "-pattern_type", "glob",
+    "-i", os.path.join(frame_dir, "field_t*.png"),
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    video_output
+]
+
+try:
+    subprocess.run(ffmpeg_cmd, check=True)
+    print(f"✅ Video created: {video_output}")
+except Exception as e:
+    print(f"❌ Failed to create video: {e}")
