@@ -203,10 +203,6 @@ void LBMSolver::runShearWaveDecay(double omega, int steps, int output_interval) 
         std::cout << "[Rank 0] Lattice updates/sec (Billion): " << lups << std::endl;
 }
 
-void LBMSolver::exchangeBoundaries() {
-    // TODO: Implement MPI halo exchange here
-}
-
 void LBMSolver::printInfo() {
     std::cout << "[Rank " << rank_ << "] Domain: x = " << local_x_start
               << " to " << local_x_end - 1 << ", Total ranks = " << size_ << std::endl;
